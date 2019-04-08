@@ -86,33 +86,78 @@ system(paste(paste(wbt_dir),
              "--dem='dem_breach_major.tif'", 
              "-o='fac.tif'"))
 
-#Define stream network based on fac threshold
-flowgrid<-raster(paste0(scratch_dir,"fac.tif"))
-flowgrid[flowgrid<1e3]<-NA
-flowgrid<-flowgrid*0+1
-flowgrid@crs<-dem@crs
-writeRaster(flowgrid,paste0(scratch_dir,"flowgrid.tiff"), overwrite=T)
+#Read fac and define values
+fac<-raster(paste0(scratch_dir,"fac.tif"))
+fac<-c(cellStats(fac, min), cellStats(fac, max))
 
-#Delineate wateshed-------------------------------------------------
+#Define stream network based on fac threshold
+system(paste(paste(wbt_dir), 
+             "-r=Reclass", 
+             paste0("--wd=",scratch_dir),
+             "-i='fac.tif'",
+             "-o='flowgrid.tif",
+             paste0("--reclass_vals='0;",fac[1],";1000;1;1000;",fac[2]+1)
+))
+
+#Create Pour Points--------------------------------------------------
+#Create UID 
+gages$id<-seq(0, nrow(gages)-1)
+
 #Export pour point to scratch directory 
 st_write(gages, paste0(scratch_dir,"pnts.shp"), delete_layer = T)
 
-#Run flow direction [note we can skip breaching and/or filling sinks b/c we are using NHD data
+#Create pour pnt raster
+system(paste(paste(wbt_dir), 
+             "-r=VectorPointsToRaster", 
+             paste0("--wd=",scratch_dir),
+             "-i='pnts.shp'", 
+             "--field=UID",
+             "-o=pp.tif",
+             "--assign=min",
+             "--nodata",
+             "--base=dem.tif"))
+
+#Jenson Snap Pour point
+system(paste(paste(wbt_dir),
+             "-r=JensonSnapPourPoints", 
+             paste0("--wd=",scratch_dir),
+             "--pour_pts='pp.tif'", 
+             "--streams='flowgrid.tif'",
+             "-o='pp_snap.tif",
+             "--snap_dist=1000"))
+
+#Convert back to point file
+snapgrid<-raster(paste0(scratch_dir,"pp_snap.tif"))
+snapvector<-getValues(snapgrid)
+snapvalues<-na.omit(snapvector)
+snappnts<- tibble(snap_length=which(snapvector %in% snapvalues)) %>% 
+  mutate(x = (snap_length %% ncol(snapgrid))*res(snapgrid)[1]+extent(snapgrid)[1]-res(snapgrid)[1]/2, 
+         y = extent(snapgrid)[4]-((ceiling(snap_length/ncol(snapgrid)))*res(snapgrid)[2])+res(snapgrid)[2]/2,
+         id= snapvalues)
+
+#Create sf file and export to workspace
+snappnts<-st_as_sf(snappnts, 
+                   coords=c("x","y"), 
+                   crs=paste(dem@crs))
+st_write(snappnts, paste0(scratch_dir,"snap.shp"), delete_layer = T)
+
+#Delineate wateshed-------------------------------------------------
+#Run flow direction 
 system(paste(paste(wbt_dir), 
              "-r=D8Pointer", 
              paste0("--wd=",scratch_dir),
              "--dem='dem_breach_major.tif'", 
-             "-o='fdr.tif'",x
+             "-o='fdr.tif'",
              "--out_type=sca"))
-
 #Delineate watershed
 system(paste(paste(wbt_dir),
-             "-r=Watershed", 
+             "-r=unnest_basins", 
              paste0("--wd=",scratch_dir),
              "--d8_pntr='fdr.tif'", 
-             "--pour_pts='pnts.shp'",
+             "--pour_pts='snap.shp'",
              "-o='watershed.tif"))
 
-#Download watershed
-ws_grd<-raster(paste0(scratch_dir,"watershed.tif"))
-ws_shp<-rasterToPolygons(ws_grd, dissolve = T)
+#######################################################################
+#Estimate metrics for each watershed-----------------------------------
+#######################################################################
+
