@@ -17,6 +17,7 @@ library(raster)
 library(sf)
 library(rgdal)
 library(parallel)
+library(rslurm)   
 
 #Set data dir
 data_dir<-'//storage.research.sesync.org/njones-data/Research Projects/Delmarva_Hysteresis/gage_analysis/'
@@ -224,21 +225,19 @@ attributes_fun<-function(j){
   c(pp_shp$pp_snap, as.numeric(st_area(w_shp)/10000), sum(wet_shp$hectares))
 }
 
-#Execute function
-n.cores<-detectCores() #detect number of cores
-cl <- makePSOCKcluster(n.cores) #Create Clusters
-clusterEvalQ(cl, library(raster))  #Send clusters the libraries used
-clusterEvalQ(cl, library(sf))  #Send clusters the libraries used
-clusterEvalQ(cl, library(tidyverse))  #Send clusters the libraries used
-clusterExport(cl, c('wetlands', 'pp','watershed_index', 'scratch_dir'), env=environment())  #Send Clusters function with the execute function
-x<-parLapply(cl, seq(1,nrow(watershed_index)), attributes_fun) #Run execute Function
-stopCluster(cl)  #Turn clusters off
-
-#Unlist
-output<-data.frame(do.call(rbind,x))
-colnames(output)<-c("PP_ID", "Watershed_Area", "Wetland_Area")
-
+# #Execute function
+# n.cores<-detectCores() #detect number of cores
+# cl <- makePSOCKcluster(n.cores) #Create Clusters
+# clusterEvalQ(cl, library(raster))  #Send clusters the libraries used
+# clusterEvalQ(cl, library(sf))  #Send clusters the libraries used
+# clusterEvalQ(cl, library(tidyverse))  #Send clusters the libraries used
+# clusterExport(cl, c('wetlands', 'pp','watershed_index', 'scratch_dir'), env=environment())  #Send Clusters function with the execute function
+# x<-parLapply(cl, seq(1,nrow(watershed_index)), attributes_fun) #Run execute Function
+# stopCluster(cl)  #Turn clusters off
+# #Unlist
+# output<-data.frame(do.call(rbind,x))
+# colnames(output)<-c("PP_ID", "Watershed_Area", "Wetland_Area")
 #Export output df
-output
+#output
 
 
