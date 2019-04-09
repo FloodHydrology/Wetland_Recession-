@@ -13,11 +13,10 @@ remove(list=ls())
 
 #load appropriate packages
 library(tidyverse)
-library(lubridate)
-library(dataRetrieval)
 library(raster)
 library(sf)
 library(rgdal)
+library(parallel)
 
 #Set data dir
 data_dir<-'//storage.research.sesync.org/njones-data/Research Projects/Delmarva_Hysteresis/gage_analysis/'
@@ -44,6 +43,7 @@ gages<-gages[mask,]
 fp_wetlands<-st_read(paste0(data_dir, "fp_wetlands.shp"))
 nfp_wetlands<-st_read(paste0(data_dir, "nfp_wetlands.shp"))
 wetlands<-rbind(fp_wetlands, nfp_wetlands)
+wetlands<-st_transform(wetlands, crs=paste(dem@crs))
 remove(fp_wetlands, nfp_wetlands)
 
 #######################################################################
@@ -157,7 +157,88 @@ system(paste(paste(wbt_dir),
              "--pour_pts='snap.shp'",
              "-o='watershed.tif"))
 
+#Clean up workspace
+remove(list=ls()[ls()!='gages'    &
+                 ls()!='wetlands' &
+                 ls()!='data_dir' &
+                 ls()!='wbt_dir'  &
+                 ls()!='scratch_dir'])
+
 #######################################################################
 #Estimate metrics for each watershed-----------------------------------
 #######################################################################
+#Download PP file 
+pp<-raster(paste0(scratch_dir,"pp_snap.tif"))
+
+#Locate files with watershed shapes
+files<-list.files(scratch_dir)
+files<-files[substr(files, 1,9)=="watershed"]
+index_fun<-function(i){
+  temp_watershed<-raster(paste0(scratch_dir, files[i]))
+  data.frame(wuid = unique(temp_watershed), 
+             file = files[i])
+}
+watershed_index<-lapply(X = seq(1, length(files)), FUN=index_fun)
+watershed_index<-do.call(rbind, watershed_index)
+
+#Create function to estimate wetland and watershed area
+attributes_fun<-function(j){
+
+  #Download watershed file of interest
+  watershed<-raster(paste0(scratch_dir, watershed_index$file[j]))
+  
+  #Identify watershed [use watershed 1 for now]
+  w_grd<-watershed %in% watershed_index$wuid[j]
+  w_grd[w_grd==0]<-NA
+  
+  #crop raters to reasonable extent
+  w_pnts <- tibble(w_length=which(w_grd@data@values)) %>% 
+    mutate(x = (w_length %% ncol(w_grd))*res(w_grd)[1]+extent(w_grd)[1]-res(w_grd)[1]/2, 
+           y = extent(w_grd)[4]-((ceiling(w_length/ncol(w_grd)))*res(w_grd)[2])+res(w_grd)[2]/2)
+  w_grd<-crop(w_grd, c(min(w_pnts$x,na.rm = T)-res(w_grd)[1]*10,
+                       max(w_pnts$x,na.rm = T)+res(w_grd)[1]*10, 
+                       min(w_pnts$y,na.rm = F)-res(w_grd)[2]*10, 
+                       max(w_pnts$y,na.rm = F)+res(w_grd)[2]*10))
+  
+  #convert to polygon
+  w_shp<-rasterToPolygons(w_grd, dissolve = T)
+  w_shp<-st_as_sf(w_shp)
+  st_crs(w_shp)<-st_crs(wetlands)
+  
+  #Estimate number of wetlands
+  wet_shp<-wetlands[w_shp,]
+  
+  #Identify pour point of interest 
+  pp_grd<-crop(pp, c(min(w_pnts$x,na.rm = T)-res(pp)[1]*10,
+                     max(w_pnts$x,na.rm = T)+res(pp)[1]*10, 
+                     min(w_pnts$y,na.rm = F)-res(pp)[2]*10, 
+                     max(w_pnts$y,na.rm = F)+res(pp)[2]*10))
+  pp_shp<-data.frame(rasterToPoints(pp_grd))
+  pp_shp<-st_as_sf(pp_shp, 
+                   coords=c("x","y"), 
+                   crs=st_crs(wetlands))
+  pp_shp$dist<-st_distance(pp_shp, w_shp, by_element = T)
+  pp_shp<-pp_shp[pp_shp$dist==min(pp_shp$dist, na.rm=T),]
+  
+  #Export watershed and wetland areas (ha)
+  c(pp_shp$pp_snap, as.numeric(st_area(w_shp)/10000), sum(wet_shp$hectares))
+}
+
+#Execute function
+n.cores<-detectCores() #detect number of cores
+cl <- makePSOCKcluster(n.cores) #Create Clusters
+clusterEvalQ(cl, library(raster))  #Send clusters the libraries used
+clusterEvalQ(cl, library(sf))  #Send clusters the libraries used
+clusterEvalQ(cl, library(tidyverse))  #Send clusters the libraries used
+clusterExport(cl, c('wetlands', 'pp','watershed_index', 'scratch_dir'), env=environment())  #Send Clusters function with the execute function
+x<-parLapply(cl, seq(1,nrow(watershed_index)), attributes_fun) #Run execute Function
+stopCluster(cl)  #Turn clusters off
+
+#Unlist
+output<-data.frame(do.call(rbind,x))
+colnames(output)<-c("PP_ID", "Watershed_Area", "Wetland_Area")
+
+#Export output df
+output
+
 
