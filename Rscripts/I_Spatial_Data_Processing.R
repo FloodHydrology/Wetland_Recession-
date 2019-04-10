@@ -228,6 +228,7 @@ attributes_fun<-function(j){
 }
 
 #Execute function
+t0<-Sys.time()
 n.cores<-detectCores() #detect number of cores
 cl <- makePSOCKcluster(n.cores) #Create Clusters
 clusterEvalQ(cl, library(raster))  #Send clusters the libraries used
@@ -237,9 +238,17 @@ clusterEvalQ(cl, library(stars))  #Send clusters the libraries used
 clusterExport(cl, c('wetlands', 'pp','watershed_index', 'scratch_dir'), env=environment())  #Send Clusters function with the execute function
 x<-parLapply(cl, seq(1,nrow(watershed_index)), attributes_fun) #Run execute Function
 stopCluster(cl)  #Turn clusters off
+tf<-Sys.time()
+tf-t0
 
 #Unlist
 output<-data.frame(do.call(rbind,x))
 colnames(output)<-c("PP_ID", "Watershed_Area", "Wetland_Area")
 
+#Join with gages
+gages$PP_ID<-seq(1,nrow(gages))
+gages<-left_join(gages, output, by='PP_ID')
+gages<-gages[,c("SOURCE_FEA", "Watershed_Area", "Wetland_Area")]
 
+#Export data
+write.csv(gages,"output/wetland_area.csv")
