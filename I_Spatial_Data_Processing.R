@@ -16,6 +16,7 @@ library(tidyverse)
 library(raster)
 library(sf)
 library(rgdal)
+library(stars)
 library(parallel)
 library(rslurm)   
 
@@ -202,7 +203,7 @@ attributes_fun<-function(j){
                        max(w_pnts$y,na.rm = F)+res(w_grd)[2]*10))
   
   #convert to polygon
-  w_shp<-rasterToPolygons(w_grd, dissolve = T)
+  w_shp<- w_grd %>% st_as_stars() %>% st_as_sf(., as_points = FALSE, merge = TRUE) #rasterToPolygons(w_grd, dissolve = T)
   w_shp<-st_as_sf(w_shp)
   st_crs(w_shp)<-st_crs(wetlands)
   
@@ -218,26 +219,27 @@ attributes_fun<-function(j){
   pp_shp<-st_as_sf(pp_shp, 
                    coords=c("x","y"), 
                    crs=st_crs(wetlands))
-  pp_shp$dist<-st_distance(pp_shp, w_shp, by_element = T)
+  w_line<-st_cast(w_shp, "LINESTRING")
+  pp_shp$dist<-st_distance(pp_shp, w_line, by_element = T)
   pp_shp<-pp_shp[pp_shp$dist==min(pp_shp$dist, na.rm=T),]
   
   #Export watershed and wetland areas (ha)
   c(pp_shp$pp_snap, as.numeric(st_area(w_shp)/10000), sum(wet_shp$hectares))
 }
 
-# #Execute function
-# n.cores<-detectCores() #detect number of cores
-# cl <- makePSOCKcluster(n.cores) #Create Clusters
-# clusterEvalQ(cl, library(raster))  #Send clusters the libraries used
-# clusterEvalQ(cl, library(sf))  #Send clusters the libraries used
-# clusterEvalQ(cl, library(tidyverse))  #Send clusters the libraries used
-# clusterExport(cl, c('wetlands', 'pp','watershed_index', 'scratch_dir'), env=environment())  #Send Clusters function with the execute function
-# x<-parLapply(cl, seq(1,nrow(watershed_index)), attributes_fun) #Run execute Function
-# stopCluster(cl)  #Turn clusters off
-# #Unlist
-# output<-data.frame(do.call(rbind,x))
-# colnames(output)<-c("PP_ID", "Watershed_Area", "Wetland_Area")
-#Export output df
-#output
+#Execute function
+n.cores<-detectCores() #detect number of cores
+cl <- makePSOCKcluster(n.cores) #Create Clusters
+clusterEvalQ(cl, library(raster))  #Send clusters the libraries used
+clusterEvalQ(cl, library(sf))  #Send clusters the libraries used
+clusterEvalQ(cl, library(tidyverse))  #Send clusters the libraries used
+clusterEvalQ(cl, library(stars))  #Send clusters the libraries used
+clusterExport(cl, c('wetlands', 'pp','watershed_index', 'scratch_dir'), env=environment())  #Send Clusters function with the execute function
+x<-parLapply(cl, seq(1,nrow(watershed_index)), attributes_fun) #Run execute Function
+stopCluster(cl)  #Turn clusters off
+
+#Unlist
+output<-data.frame(do.call(rbind,x))
+colnames(output)<-c("PP_ID", "Watershed_Area", "Wetland_Area")
 
 
