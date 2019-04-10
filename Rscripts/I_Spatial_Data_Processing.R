@@ -1,8 +1,8 @@
 #######################################################################
-#Title: Spatial Data Preperation
+#Title: Watershed Delineation
 #Coder: Nate Jones
 #Date: 4/5/2019
-#Description: Prep spatial data on gages accross Delmarva
+#Description: Delineate watershed for each gage and estimate wetland area
 #######################################################################
 
 #######################################################################
